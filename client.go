@@ -2,6 +2,7 @@ package lock
 
 import (
 	"context"
+	"fmt"
 	"github.com/go-redis/redis/v8"
 	uuid "github.com/satori/go.uuid"
 	"log"
@@ -29,13 +30,15 @@ func NewRedisClient(ctx context.Context, client *redis.Client) *RedisClient {
 /**
  *  @Description: 获取普通锁
  *  @receiver r
- *  @param key
+ *  @param key 锁
+ *  @param renewSec 续约时长
  *  @return *RedisLock
  */
-func (r *RedisClient) GetLock(key string) *RedisLock {
+func (r *RedisClient) GetLock(key string, renewSec int64) *RedisLock {
 	return &RedisLock{
 		client:   r,
 		key:      key,
+		renewSec: renewSec,
 	}
 }
 
@@ -46,9 +49,11 @@ func (r *RedisClient) GetLock(key string) *RedisLock {
  *  @param key
  *  @param random
  */
-func (r *RedisClient) WatchDog(unlockCh chan struct{}, key string, random uuid.UUID) {
-	// 创建一个触发器NewTicker, 每隔2秒触发一次,类似于闹钟
-	expTicker := time.NewTicker(time.Second * 2)
+func (r *RedisClient) WatchDog(unlockCh chan struct{}, renewSec int64, key string, random uuid.UUID) {
+	defer func() {
+		if e := recover(); e != nil {
+		}
+	}()
 	//确认锁与锁续期打包原子化
 	script := redis.NewScript(`
     if redis.call('get', KEYS[1]) == ARGV[1]
@@ -60,14 +65,19 @@ func (r *RedisClient) WatchDog(unlockCh chan struct{}, key string, random uuid.U
   `)
 	for {
 		select {
-		case <-expTicker.C: //每隔2s触发一次
-			resp := script.Run(r.ctx, r, []string{key}, random, 10)
-			if result, err := resp.Result(); err != nil || result == int64(0) {
-				//续期失败
-				log.Println("expire lock failed", err)
-			}
 		case <-unlockCh: //任务完成后用户解锁通知看门狗退出
+			fmt.Println("unlockNotify", key)
 			return
+		default:
+			time.Sleep(time.Duration(renewSec/2) * time.Second)
+			resp := script.Run(r.ctx, r, []string{key}, random, renewSec)
+			if result, err := resp.Result(); err != nil || result == int64(0) {
+				//续约失败
+				log.Println("expire lock", key, renewSec, "sec failed", err)
+			} else {
+				//续约成功
+				log.Println("expire lock", key, renewSec, "sec success")
+			}
 		}
 	}
 }

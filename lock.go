@@ -13,6 +13,7 @@ type RedisLock struct {
 	randomValue interface{}   //随机值
 	unlockCh    chan struct{} //解锁通知通道
 	client      *RedisClient  //redis客户端
+	renewSec    int64         //续约时长, <0不续约
 }
 
 /**
@@ -26,7 +27,7 @@ type RedisLock struct {
 func (l *RedisLock) Lock(block bool, expire time.Duration) (bool, error) {
 	var resp *redis.BoolCmd
 	uuid := uuid.NewV1()
-	l.randomValue = uuid
+	l.randomValue = string(uuid[:])
 	for {
 		resp = l.client.SetNX(l.client.ctx, l.key, uuid, expire) //返回执行结果
 		lockSuccess, err := resp.Result()
@@ -45,32 +46,32 @@ func (l *RedisLock) Lock(block bool, expire time.Duration) (bool, error) {
 /**
  *  @Description: 限时阻塞获取锁
  *  @receiver l
- *  @param seconds 等待时长
- *  @param expire 锁过期时间
+ *  @param waitSeconds 等待时长
+ *  @param expireTime 锁过期时长
  *  @return bool
  *  @return error
  */
-func (l *RedisLock) LockWaitSeconds(seconds int64, expire time.Duration) (bool, error) {
-	if seconds <= 0 {
-		return false, errors.New("seconds must grater than zero")
+func (l *RedisLock) LockWaitSeconds(waitSeconds int64, expireTime time.Duration) (bool, error) {
+	if waitSeconds <= 0 {
+		return false, errors.New("waitSeconds must grater than zero")
 	}
-	expTimer := time.NewTimer(time.Duration(seconds) * time.Second) //定时器
+	expTimer := time.NewTimer(time.Duration(waitSeconds) * time.Second) //定时器
 	var resp *redis.BoolCmd
 	uuid := uuid.NewV1()
-	l.randomValue = uuid
+	l.randomValue = uuid //string(uuid[:])
 	for {
 		select {
 		case <-expTimer.C: //两秒后触发
 			return false, nil
 		default:
-			resp = l.client.SetNX(l.client.ctx, l.key, uuid, expire) //返回执行结果
+			resp = l.client.SetNX(l.client.ctx, l.key, uuid, expireTime) //返回执行结果
 			lockSuccess, err := resp.Result()
 			if err == nil && lockSuccess {
 				//加锁成功
-				//如果设置锁有过期时间,则通知看门狗
-				if expire > 0 {
+				//只有当锁过期时长>0且续约时长>0时,通知看门狗续约
+				if expireTime > 0 && l.renewSec > 0 {
 					l.unlockCh = make(chan struct{}, 0)
-					go l.client.WatchDog(l.unlockCh, l.key, uuid)
+					go l.client.WatchDog(l.unlockCh, l.renewSec, l.key, uuid)
 				}
 				return true, nil
 			} else {
@@ -96,9 +97,10 @@ func (l *RedisLock) Unlock() {
   `)
 	resp := script.Run(l.client.ctx, l.client, []string{l.key}, l.randomValue)
 	if result, err := resp.Result(); err != nil || result == 0 {
-		log.Println("unlock failed:", err)
+		log.Println(l.key, " unlock failed:", err)
 	} else {
 		//删锁成功后，通知看门狗退出
+		log.Println(l.key, " unlock success")
 		if l.unlockCh != nil {
 			l.unlockCh <- struct{}{}
 		}
