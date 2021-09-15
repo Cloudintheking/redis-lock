@@ -2,7 +2,6 @@ package lock
 
 import (
 	"context"
-	"fmt"
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"log"
@@ -31,25 +30,24 @@ func NewRedisClient(ctx context.Context, client *redis.Client) *RedisClient {
  *  @Description: 获取普通锁
  *  @receiver r
  *  @param key 锁
- *  @param renewSec 续约时长
  *  @return *RedisLock
  */
-func (r *RedisClient) GetLock(key string, renewSec int64) *RedisLock {
+func (r *RedisClient) GetLock(key string) *RedisLock {
 	return &RedisLock{
-		client:   r,
-		key:      key,
-		renewSec: renewSec,
+		client: r,
+		key:    key,
 	}
 }
 
 /**
- *  @Description: 锁续期
+ *  @Description: 锁续约
  *  @receiver r
- *  @param unlockCh
- *  @param key
- *  @param random
+ *  @param unlockCh 解锁通知通道
+ *  @param key 锁key
+ *  @param random 锁值
+ *  @param renewSec 锁续约时长
  */
-func (r *RedisClient) WatchDog(unlockCh chan struct{}, renewSec int64, key string, random uuid.UUID) {
+func (r *RedisClient) WatchDog(unlockCh chan struct{}, key string, random uuid.UUID, renewSec int64) {
 	defer func() {
 		if e := recover(); e != nil {
 		}
@@ -65,18 +63,19 @@ func (r *RedisClient) WatchDog(unlockCh chan struct{}, renewSec int64, key strin
   `)
 	for {
 		select {
-		case <-unlockCh: //任务完成后用户解锁通知看门狗退出
-			fmt.Println("unlockNotify", key)
+		case <-unlockCh:
+			//收到解锁通知,看门狗退出
+			log.Println(" receive unlockNotify", key, ",watch dog out")
 			return
 		default:
-			time.Sleep(time.Duration(renewSec/2) * time.Second)
+			time.Sleep(time.Duration(renewSec/3) * time.Second)
 			resp := script.Run(r.ctx, r, []string{key}, random, renewSec)
 			if result, err := resp.Result(); err != nil || result == int64(0) {
 				//续约失败
-				log.Println("expire lock", key, renewSec, "sec failed", err)
+				log.Println("renew lock", key, renewSec, "sec failed", err)
 			} else {
 				//续约成功
-				log.Println("expire lock", key, renewSec, "sec success")
+				log.Println("renew lock", key, renewSec, "sec success")
 			}
 		}
 	}

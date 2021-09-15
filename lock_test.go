@@ -18,15 +18,14 @@ func TestLock(t *testing.T) {
 		DB:       0,  // use default DB
 	})
 	client := lock.NewRedisClient(context.Background(), rdb)
-	lock := client.GetLock("test", 5)
-
+	lock := client.GetLock("test").Renew(5)
 	//阻塞获取
 	fmt.Println("开始限时获取锁,timestamp:", time.Now().Unix())
-	if ok, err := lock.LockWaitSeconds(5, 15*time.Second); !ok {
+	if ok, err := lock.LockWaitSeconds(5, 2*time.Second); !ok {
 		fmt.Println("限时获取锁失败,timestamp:", time.Now().Unix(), err)
 	} else {
 		fmt.Println("限时获取锁成功,timestamp:", time.Now().Unix())
-		time.Sleep(30 * time.Second)
+		time.Sleep(10 * time.Second)
 		lock.Unlock()
 		fmt.Println("删除锁成功,timestamp:", time.Now().Unix())
 	}
