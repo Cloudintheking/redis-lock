@@ -3,7 +3,7 @@ package lock_test
 import (
 	"context"
 	"fmt"
-	"github.com/Cloudintheking/redis-lock"
+	"github.com/cloudintheking/redis-lock"
 	"github.com/go-redis/redis/v8"
 	"testing"
 	"time"

@@ -1,4 +1,4 @@
-module github.com/Cloudintheking/redis-lock
+module github.com/cloudintheking/redis-lock
 
 go 1.16
 
