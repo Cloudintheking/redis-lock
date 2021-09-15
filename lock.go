@@ -3,7 +3,7 @@ package lock
 import (
 	"errors"
 	"github.com/go-redis/redis/v8"
-	uuid "github.com/satori/go.uuid"
+	"github.com/google/uuid"
 	"log"
 	"time"
 )
@@ -26,7 +26,7 @@ type RedisLock struct {
  */
 func (l *RedisLock) Lock(block bool, expire time.Duration) (bool, error) {
 	var resp *redis.BoolCmd
-	uuid := uuid.NewV1()
+	uuid, _ := uuid.NewRandom()
 	l.randomValue = string(uuid[:])
 	for {
 		resp = l.client.SetNX(l.client.ctx, l.key, uuid, expire) //返回执行结果
@@ -57,7 +57,7 @@ func (l *RedisLock) LockWaitSeconds(waitSeconds int64, expireTime time.Duration)
 	}
 	expTimer := time.NewTimer(time.Duration(waitSeconds) * time.Second) //定时器
 	var resp *redis.BoolCmd
-	uuid := uuid.NewV1()
+	uuid, _ := uuid.NewRandom()
 	l.randomValue = uuid //string(uuid[:])
 	for {
 		select {
