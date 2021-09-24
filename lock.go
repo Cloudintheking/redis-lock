@@ -40,6 +40,9 @@ func (l *RedisLock) Renew(renewSec int64) *RedisLock {
  *  @return error
  */
 func (l *RedisLock) Lock(block bool, expire time.Duration) (bool, error) {
+	if expire*3 <= time.Duration(l.renewSec)*time.Second {
+		return false, errors.New("expire must grater than renewSec/3")
+	}
 	var resp *redis.BoolCmd
 	uuid, _ := uuid.NewRandom()
 	l.randomValue = string(uuid[:])
@@ -47,7 +50,12 @@ func (l *RedisLock) Lock(block bool, expire time.Duration) (bool, error) {
 		resp = l.client.SetNX(l.client.ctx, l.key, uuid, expire) //返回执行结果
 		lockSuccess, err := resp.Result()
 		if err == nil && lockSuccess {
-			//加锁成功,跳出循环
+			//加锁成功,通知看门狗
+			//只有当锁过期时长>0且续约时长>0时,通知看门狗续约
+			if expire > 0 && l.renewSec > 0 {
+				l.unlockCh = make(chan struct{}, 0)
+				go l.client.WatchDog(l.unlockCh, l.key, uuid, l.renewSec)
+			}
 			return true, nil
 		} else {
 			if !block {
@@ -66,12 +74,12 @@ func (l *RedisLock) Lock(block bool, expire time.Duration) (bool, error) {
  *  @return bool
  *  @return error
  */
-func (l *RedisLock) LockWaitSeconds(waitSeconds int64, expireTime time.Duration) (bool, error) {
+func (l *RedisLock) LockWaitSeconds(waitSeconds int64, expire time.Duration) (bool, error) {
 	if waitSeconds <= 0 {
 		return false, errors.New("waitSeconds must grater than zero")
 	}
-	if expireTime*3 <= time.Duration(l.renewSec)*time.Second {
-		return false, errors.New("expireTime must grater than renewSec/3")
+	if expire*3 <= time.Duration(l.renewSec)*time.Second {
+		return false, errors.New("expire must grater than renewSec/3")
 	}
 	expTimer := time.NewTimer(time.Duration(waitSeconds) * time.Second) //定时器
 	var resp *redis.BoolCmd
@@ -82,12 +90,12 @@ func (l *RedisLock) LockWaitSeconds(waitSeconds int64, expireTime time.Duration)
 		case <-expTimer.C: //waitSeconds秒后触发
 			return false, nil
 		default:
-			resp = l.client.SetNX(l.client.ctx, l.key, uuid, expireTime) //返回执行结果
+			resp = l.client.SetNX(l.client.ctx, l.key, uuid, expire) //返回执行结果
 			lockSuccess, err := resp.Result()
 			if err == nil && lockSuccess {
 				//加锁成功
 				//只有当锁过期时长>0且续约时长>1时,通知看门狗续约
-				if expireTime > 0 && l.renewSec > 1 {
+				if expire > 0 && l.renewSec > 0 {
 					l.unlockCh = make(chan struct{}, 0)
 					go l.client.WatchDog(l.unlockCh, l.key, uuid, l.renewSec)
 				}
